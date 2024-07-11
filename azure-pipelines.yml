@@ -1,0 +1,77 @@
+trigger:
+- main
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  dockerRegistryServiceConnection: 'ShippifyDocker'
+  dockerRepository: 'harshalmeshrampixonix/shippify'
+  imageName: 'shippifyadmin'
+  sshServiceConnection: 'ssh-service-connection'
+
+steps:
+- task: NodeTool@0
+  inputs:
+    versionSpec: '18.x'
+  displayName: 'Install Node.js'
+
+- script: |
+    npm install
+    npm run build
+    npm run export
+  displayName: 'Install dependencies and build'
+
+- task: ArchiveFiles@2
+  displayName: Archive files
+  inputs:
+    rootFolderOrFile: $(System.DefaultWorkingDirectory)/out
+    includeRootFolder: false
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: 'out'
+    publishLocation: 'Container'
+
+# Docker login step to authenticate with Docker Hub or other registry
+- script: |
+    echo Harshal@112762 | docker login -u harshalmeshrampixonix --password-stdin
+  displayName: 'Login to Docker Registry'
+  env:
+    DOCKER_USERNAME: harshalmeshrampixonix
+    DOCKER_PASSWORD: Harshal@112762
+
+# Download build artifacts and build Docker image
+- task: DownloadBuildArtifacts@0
+  inputs:
+    buildType: 'current'
+    downloadType: 'single'
+    artifactName: 'out'
+    downloadPath: '$(Pipeline.Workspace)/out'
+  displayName: 'Download build artifacts'
+
+# Build the Docker image using the Dockerfile and push it to the Docker registry
+- task: Docker@2
+  inputs:
+    containerRegistry: $(dockerRegistryServiceConnection)
+    repository: $(dockerRepository)
+    command: 'buildAndPush'
+    Dockerfile: '**/Dockerfile'
+    tags: '$(Build.BuildId)'
+  displayName: 'Build and Push Docker image'
+
+# Deploy the Docker container to a Linux VM via SSH
+- task: SSH@0
+  inputs:
+    sshEndpoint: $(sshServiceConnection)
+    runOptions: 'commands'
+    commands: |
+      # Pull the newly built Docker image from the registry
+      sudo docker pull $(dockerRepository):$(Build.BuildId)
+      # Stop any existing container named shippifyadmin, if running
+      sudo docker stop shippifyadmin || true
+      # Remove the stopped container named shippifyadmin, if exists
+      sudo docker rm shippifyadmin || true
+      # Run a new container with the latest image
+      sudo docker run -d -p 3001:3001 --name shippifyadmin $(dockerRepository):$(Build.BuildId)
+  displayName: 'Deploy Docker container to Linux VM'
